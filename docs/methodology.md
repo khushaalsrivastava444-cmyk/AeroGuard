@@ -1,7 +1,7 @@
 # AeroGuard: Mathematical & Experimental Methodology
 
-**Document Version:** 1.0  
-**Scope:** NASA C-MAPSS FD001 Turbofan Engine Degradation Simulation  
+**Author:** Khushaal Srivastava (B.Tech Artificial Intelligence and Data Science)  
+**Dataset:** NASA C-MAPSS FD001 Turbofan Engine Degradation Simulation  
 
 ---
 
@@ -20,7 +20,7 @@ Empirical inspection of turbofan degradation demonstrates that engines exhibit s
 Attempting to fit an uncapped linear target forces models to learn arbitrary noise patterns in healthy regimes, drastically destabilizing gradient updates. We therefore apply a piecewise-linear target ceiling:
 $$RUL_{\text{capped}}(i, t) = \min(T_i - t, RUL_{\text{cap}})$$
 
-Through sensitivity ablation across $RUL_{\text{cap}} \in [100, 115, 125, 140, \infty]$, we observed that $RUL_{\text{cap}} = 115-125$ cycles optimizes the NASA Asymmetric Score on held-out test data.
+Through sensitivity ablation across $RUL_{\text{cap}} \in [100, 115, 125, 130, 140, 150, \infty]$, candidate caps are evaluated on simulated validation endpoints, selecting the target cap without test-set peeking.
 
 ---
 
@@ -50,7 +50,7 @@ $$\Delta_w x_{t,j} = \begin{cases} x_{t,j} - x_{t-w, j} & \text{if } t > w \\ x_
 
 A critical flaw in naive time-series ML implementations is random $K$-fold cross-validation, which splits adjacent cycles of the same engine between training and validation folds. Because $x_t$ and $x_{t+1}$ have high autocorrelation, random splitting produces artificially inflated validation performance that fails to generalize.
 
-### 3.1 Engine-Level GroupKFold
+### 3.1 Strict Engine-Level GroupKFold
 We enforce complete fleet isolation using `GroupKFold` ($K = 5$) on `engine_id`:
 $$\mathcal{E}_{\text{val}}^{(k)} \cap \mathcal{E}_{\text{train}}^{(k)} = \emptyset \quad \forall k \in \{1, \dots, 5\}$$
 All 20 validation engines in fold $k$ are completely withheld from model fitting.
@@ -58,8 +58,18 @@ All 20 validation engines in fold $k$ are completely withheld from model fitting
 ### 3.2 Preprocessing Hygiene
 Standardization ($\mathbf{z} = (\mathbf{x} - \boldsymbol{\mu}) / \boldsymbol{\sigma}$) is fitted strictly on the training partition of each fold and applied downstream to validation/test folds using learned training statistics.
 
-### 3.3 Test Protocol Simulation
-The official NASA test set (`test_FD001.txt`) consists of truncated sequences where the evaluation objective is to predict RUL at the **terminal observed cycle**. When evaluating validation folds, we extract the terminal cycle of held-out engines to benchmark against the exact operational task.
+### 3.3 Simulated Truncated Endpoint Validation
+The official NASA test set (`test_FD001.txt`) evaluates models at exactly **one operational inspection cutoff per engine**. Evaluating cross-validation over all lifecycle observations (`run_all_cycle_cv`) skews metrics toward longer-lived engines and fails to mirror operational test deployment.
+
+We implement `run_endpoint_group_cv`:
+1. For each held-out engine $i \in \mathcal{E}_{\text{val}}$, an operational cutoff cycle is sampled:
+   $$t_{\text{cutoff}}^{(i)} \sim \text{Uniform}(\min(30, T_i - 5), T_i)$$
+2. Causal temporal features are generated strictly on the truncated trajectory $\{x_t^{(i)}\}_{t=1}^{t_{\text{cutoff}}^{(i)}}$.
+3. True endpoint target is computed as $RUL_{\text{true}}^{(i)} = T_i - t_{\text{cutoff}}^{(i)}$.
+4. The model evaluates exactly 1 prediction per validation engine.
+
+### 3.4 Official Test Set Protection
+The official NASA test set (`test_FD001.txt`, `RUL_FD001.txt`) is strictly preserved as a post-selection evaluation benchmark. Model selection (champion XGBoost) and target capping threshold selection are performed strictly on validation endpoint metrics.
 
 ---
 
@@ -80,11 +90,14 @@ $$S = \sum_{i=1}^N s_i, \quad s_i = \begin{cases} \exp\left(-\frac{d_i}{13}\righ
 
 ## 5. Conformal Uncertainty Estimation
 
-We implement **Split Conformal Prediction** to construct valid $1 - \alpha$ prediction intervals without distributional assumptions:
-1. Partition training fleet into proper training engines $\mathcal{E}_{\text{proper}}$ (80%) and calibration engines $\mathcal{E}_{\text{cal}}$ (20%).
-2. Train model on $\mathcal{E}_{\text{proper}}$ and compute non-conformity residuals on calibration engines:
+We implement **Split Conformal Prediction** to construct valid distribution-free prediction intervals:
+1. Partition the 100 training engines into 80 proper training engines $\mathcal{E}_{\text{proper}}$ and 20 held-out calibration engines $\mathcal{E}_{\text{cal}}$. Official test engines are never used for calibration.
+2. Fit pipeline strictly on $\mathcal{E}_{\text{proper}}$.
+3. On $\mathcal{E}_{\text{cal}}$, evaluate simulated inspection endpoints to obtain non-conformity absolute residuals:
    $$R_i = |y_i - \hat{y}_i| \quad \forall i \in \mathcal{E}_{\text{cal}}$$
-3. For significance level $\alpha = 0.10$ (90% nominal coverage), compute the finite-sample corrected empirical quantile:
-   $$\hat{q} = \text{Quantile}\left(\{R_i\}_{i=1}^n, \frac{\lceil(n+1)(1-\alpha)\rceil}{n}\right)$$
-4. The prediction interval for test instance $x$ is:
+4. For nominal coverage level $1 - \alpha = 0.90$, determine the exact finite-sample order statistic rank:
+   $$k = \lceil (n + 1)(1 - \alpha) \rceil$$
+   If $k > n$, the sample size is insufficient to guarantee coverage and a `ValueError` is raised. For $n = 20$ and $\alpha = 0.10$, $k = \lceil 21 \times 0.90 \rceil = 19 \le 20$.
+5. The conformal margin is $\hat{q} = R_{(k)}$. The prediction interval for test instance $x$ is:
    $$C(x) = [\max(0, \hat{y} - \hat{q}), \hat{y} + \hat{q}]$$
+6. Under exchangeability between calibration and test residuals, $\mathbb{P}(y \in C(x)) \ge 1 - \alpha$. When evaluated across the 100 official test fleet endpoints, AeroGuard achieves an empirical coverage of **82.0%** with a mean interval width of **85.6 cycles**, honestly reflecting the domain shift between uniform simulation truncation and test-fleet cutoff distributions.

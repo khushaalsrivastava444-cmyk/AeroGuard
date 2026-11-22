@@ -37,6 +37,17 @@ def test_split_conformal_predictor():
     assert eval_res["mean_interval_width"] > 0.0
 
 
+def test_split_conformal_small_sample_edge_case():
+    """Verify ValueError is raised when sample size is too small to guarantee nominal coverage."""
+    # n = 5, alpha = 0.05 -> k = ceil(6 * 0.95) = 6 > 5
+    y_true = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    y_pred = np.array([11.0, 19.0, 31.0, 39.0, 52.0])
+
+    conformal = SplitConformalPredictor(alpha=0.05)
+    with pytest.raises(ValueError, match="too small"):
+        conformal.fit(y_true, y_pred)
+
+
 def test_anomaly_detector_scoring():
     """Verify Isolation Forest anomaly detector assigns higher scores to corrupted outliers."""
     np.random.seed(42)

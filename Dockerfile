@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt /app/
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
+# Ensure runtime directories exist
+RUN mkdir -p /app/models /app/data/raw /app/results/metrics /app/results/figures
+
 # Copy application code, pre-trained models, and pre-computed figures/data
 COPY src/ /app/src/
 COPY app/ /app/app/

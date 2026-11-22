@@ -92,27 +92,44 @@ def run_advanced_experiments():
     # 2. Conformal Uncertainty Estimation
     # -------------------------------------------------------------
     print("\n--- Calibrating Split Conformal Predictor (90% Nominal Coverage) ---")
-    # Hold out 20 training engines as calibration set
-    np.random.seed(42)
+    # Hold out 20 training engines strictly for calibration (engine-disjoint split)
+    rng = np.random.RandomState(42)
     all_train_engines = np.sort(train_df["engine_id"].unique())
-    cal_engine_ids = np.random.choice(all_train_engines, size=20, replace=False)
+    cal_engine_ids = rng.choice(all_train_engines, size=20, replace=False)
     proper_train_ids = np.setdiff1d(all_train_engines, cal_engine_ids)
 
-    df_proper = train_df[train_df["engine_id"].isin(proper_train_ids)]
-    df_cal = train_df[train_df["engine_id"].isin(cal_engine_ids)]
+    df_proper = train_df[train_df["engine_id"].isin(proper_train_ids)].copy()
+    df_cal = train_df[train_df["engine_id"].isin(cal_engine_ids)].copy()
 
+    # Fit pipeline strictly on proper training fleet (80 engines)
     X_proper, y_proper, _ = prepare_feature_matrix(df_proper, include_temporal=True, rul_cap=125, is_train=True)
-    X_cal, y_cal, _ = prepare_feature_matrix(df_cal, include_temporal=True, rul_cap=125, is_train=True)
-
     cal_pipe = pipeline
     cal_pipe.fit(X_proper, y_proper)
-    y_cal_pred = cal_pipe.predict(X_cal)
+
+    # Simulate operational truncated inspection endpoints across calibration engines
+    # (mirroring the test evaluation setup where each engine is inspected at an unknown cutoff)
+    cal_endpoint_rows = []
+    cal_targets = []
+    for eng_id, group in df_cal.groupby("engine_id"):
+        t_max = int(group["cycle"].max())
+        cutoff = rng.randint(min(30, t_max - 5), t_max)
+        truncated_group = group[group["cycle"] <= cutoff].copy()
+        features = compute_temporal_features(truncated_group, sensors=INFORMATIVE_SENSORS, windows=(5, 15))
+        cal_endpoint_rows.append(features.iloc[[-1]])
+        cal_targets.append(t_max - cutoff)
+
+    cal_endpoint_df = pd.concat(cal_endpoint_rows, ignore_index=True)
+    X_cal_endpoint = cal_endpoint_df[feature_names]
+    y_cal_true = np.array(cal_targets)
+    y_cal_pred = np.maximum(0.0, cal_pipe.predict(X_cal_endpoint))
 
     conformal = SplitConformalPredictor(alpha=0.10)  # 90% target coverage
-    conformal.fit(y_cal.to_numpy(), y_cal_pred)
+    conformal.fit(y_cal_true, y_cal_pred)
 
     cov_results = conformal.evaluate_coverage(y_test_true, y_test_pred)
-    print(f"Conformal Calibration Quantile q: \u00b1{conformal.quantile_:.2f} cycles")
+    print(f"Calibration Engines: {len(y_cal_true)} (1 simulated cutoff per engine)")
+    print(f"Finite-Sample Quantile Index k: {int(np.ceil((len(y_cal_true) + 1) * 0.90))} / {len(y_cal_true)}")
+    print(f"Conformal Calibration Margin q: \u00b1{conformal.quantile_:.2f} cycles")
     print(f"Empirical Test Coverage (Nominal 90%): {cov_results['empirical_coverage']*100:.1f}%")
     print(f"Mean Interval Width: {cov_results['mean_interval_width']:.1f} cycles")
 
@@ -151,7 +168,7 @@ def run_advanced_experiments():
     eng_sample["anomaly_score"] = anomaly_scores
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), dpi=200, sharex=True)
-    ax1.plot(eng_sample["cycle"], eng_sample["s_4"], color="#1f77b4", linewidth=1.8, label="s_4 (T50: LPT Outlet Temp)")
+    ax1.plot(eng_sample["cycle"], eng_sample["s_4"], color="#1f77b4", linewidth=1.8, label="s_4 (T50: Total temp at LPT outlet [°R])")
     ax1.set_title("Engine 39 (Failure at Cycle 128): Physical Sensor Degradation", fontsize=11, fontweight="bold")
     ax1.set_ylabel("Temp [R]", fontsize=10)
     ax1.legend(loc="upper left")

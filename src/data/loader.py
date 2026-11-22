@@ -15,6 +15,31 @@ SETTING_COLUMNS: Final[list[str]] = ["setting_1", "setting_2", "setting_3"]
 SENSOR_COLUMNS: Final[list[str]] = [f"s_{i}" for i in range(1, 22)]
 ALL_COLUMNS: Final[list[str]] = INDEX_COLUMNS + SETTING_COLUMNS + SENSOR_COLUMNS
 
+# Canonical C-MAPSS sensor descriptions (Saxena et al., 2008, Table 2)
+SENSOR_METADATA: Final[dict[str, dict[str, str]]] = {
+    "s_1": {"symbol": "T2", "description": "Total temperature at fan inlet", "units": "\u00b0R"},
+    "s_2": {"symbol": "T24", "description": "Total temperature at LPC outlet", "units": "\u00b0R"},
+    "s_3": {"symbol": "T30", "description": "Total temperature at HPC outlet", "units": "\u00b0R"},
+    "s_4": {"symbol": "T50", "description": "Total temperature at LPT outlet", "units": "\u00b0R"},
+    "s_5": {"symbol": "P2", "description": "Pressure at fan inlet", "units": "psia"},
+    "s_6": {"symbol": "P15", "description": "Total pressure in bypass-duct", "units": "psia"},
+    "s_7": {"symbol": "P30", "description": "Total pressure at HPC outlet", "units": "psia"},
+    "s_8": {"symbol": "Nf", "description": "Physical fan speed", "units": "rpm"},
+    "s_9": {"symbol": "Nc", "description": "Physical core speed", "units": "rpm"},
+    "s_10": {"symbol": "epr", "description": "Engine pressure ratio (P50/P2)", "units": "--"},
+    "s_11": {"symbol": "Ps30", "description": "Static pressure at HPC outlet", "units": "psia"},
+    "s_12": {"symbol": "phi", "description": "Ratio of fuel flow to Ps30", "units": "pps/psi"},
+    "s_13": {"symbol": "NRf", "description": "Corrected fan speed", "units": "rpm"},
+    "s_14": {"symbol": "NRc", "description": "Corrected core speed", "units": "rpm"},
+    "s_15": {"symbol": "BPR", "description": "Bypass Ratio", "units": "--"},
+    "s_16": {"symbol": "farB", "description": "Burner fuel-air ratio", "units": "--"},
+    "s_17": {"symbol": "htBleed", "description": "Bleed Enthalpy", "units": "--"},
+    "s_18": {"symbol": "Nf_dmd", "description": "Demanded fan speed", "units": "rpm"},
+    "s_19": {"symbol": "PCNfR_dmd", "description": "Demanded corrected fan speed", "units": "rpm"},
+    "s_20": {"symbol": "W31", "description": "HPT coolant bleed", "units": "lbm/s"},
+    "s_21": {"symbol": "W32", "description": "LPT coolant bleed", "units": "lbm/s"},
+}
+
 # Explicit type mapping to prevent accidental type coercion
 DTYPES: Final[dict[str, Union[type, str]]] = {
     "engine_id": int,

@@ -37,14 +37,33 @@ class SplitConformalPredictor:
         self.calibration_residuals_: np.ndarray = np.array([])
 
     def fit(self, y_cal_true: np.ndarray, y_cal_pred: np.ndarray) -> "SplitConformalPredictor":
-        """Compute empirical non-conformity distribution from held-out calibration engines."""
+        """Compute exact empirical non-conformity order statistic from held-out calibration engines.
+
+        Order-Statistic Formula:
+            Let R_(1) <= ... <= R_(n) be sorted non-conformity scores.
+            The finite-sample conformal index is:
+                k = ceil( (n + 1) * (1 - alpha) )
+            If k > n, finite-sample 1 - alpha coverage cannot be mathematically
+            guaranteed for sample size n.
+        """
         residuals = np.abs(np.asarray(y_cal_true, dtype=float) - np.asarray(y_cal_pred, dtype=float))
         self.calibration_residuals_ = np.sort(residuals)
         n = len(residuals)
 
-        # Conformal finite-sample correction: ceil((n + 1) * (1 - alpha)) / n
-        level = min(1.0, np.ceil((n + 1) * (1.0 - self.alpha)) / n)
-        self.quantile_ = float(np.quantile(residuals, level, method="higher"))
+        if n == 0:
+            raise ValueError("Calibration set must contain at least 1 observation.")
+
+        # Exact conformal rank
+        k = int(np.ceil((n + 1) * (1.0 - self.alpha)))
+
+        if k > n:
+            raise ValueError(
+                f"Calibration sample size n={n} is too small to guarantee nominal coverage {1.0 - self.alpha:.1%}. "
+                f"Required order statistic rank k={k} exceeds sample size n={n}."
+            )
+
+        # 0-based indexing for k-th order statistic
+        self.quantile_ = float(self.calibration_residuals_[k - 1])
         return self
 
     def predict_interval(

@@ -34,11 +34,13 @@ Excluded: 8 invariant / near-zero variance channels (`setting_3`, $s_1, s_5, s_6
 ## Quantitative Performance
 
 ### 5-Fold GroupKFold Cross-Validation (Across 100 Training Engines)
-- **CV MAE:** $12.78 \pm 0.85$ cycles
-- **CV RMSE:** $17.61 \pm 1.20$ cycles
-- **CV $R^2$:** $0.821$
+- **Simulated Endpoint Val RMSE:** **32.38 cycles** (evaluated on 1 inspection cutoff per engine)
+- **Simulated Endpoint Val MAE:** **22.12 cycles**
+- **Simulated Endpoint Val NASA:** **253,898.6**
+- **All-Cycle Diagnostic CV RMSE:** $17.61$ cycles (evaluated across all 20,631 cycles)
 
 ### Official NASA Test Fleet (100 Truncated Engines at Terminal Observed Cycle)
+*Evaluated strictly as an untouched post-selection benchmark:*
 - **Official Test RMSE:** **17.86 cycles**
 - **Official Test MAE:** **13.28 cycles**
 - **Official Test $R^2$:** **0.815**
@@ -48,7 +50,10 @@ Excluded: 8 invariant / near-zero variance channels (`setting_3`, $s_1, s_5, s_6
 
 ## Uncertainty & Conformal Calibration
 - **Method:** Split Conformal Prediction
-- **Nominal Confidence Level:** 90%
-- **Empirical Test Fleet Coverage:** **85.0%**
-- **Conformal Margin $\pm q$:** $\pm 26.21$ cycles
-- **Mean Interval Width:** $50.5$ cycles
+- **Calibration Split:** 20 held-out training engines (engine-disjoint, official test engines excluded)
+- **Nominal Confidence Level:** 90% ($1 - \alpha = 0.90$)
+- **Order-Statistic Rank:** $k = \lceil(n+1)(1-\alpha)\rceil = 19 / 20$
+- **Conformal Margin $\pm q$:** $\pm 45.74$ cycles
+- **Empirical Test Fleet Coverage:** **82.0%**
+- **Mean Interval Width:** **85.6 cycles**
+- **Exchangeability Analysis:** The gap between nominal 90% and empirical 82% coverage arises from the distribution shift between uniform random truncation ($\mathcal{U}(\min(30, T-5), T)$) used on calibration engines and the specific operating inspection cutoff distribution chosen by NASA for the test fleet.

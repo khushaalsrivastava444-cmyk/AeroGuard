@@ -17,7 +17,7 @@ import streamlit as st
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
-from src.data.loader import load_fd001_raw, SENSOR_COLUMNS
+from src.data.loader import load_fd001_raw, SENSOR_COLUMNS, SENSOR_METADATA
 from src.evaluation.metrics import compute_regression_metrics
 from src.explainability.shap_explainer import AeroGuardExplainer
 from src.features.engineer import INFORMATIVE_SENSORS, compute_temporal_features
@@ -46,6 +46,36 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# -----------------------------------------------------------------------------
+# Defensive Pipeline Verification
+# -----------------------------------------------------------------------------
+def check_prerequisites():
+    raw_dir = project_root / "data" / "raw"
+    models_dir = project_root / "models"
+    metrics_dir = project_root / "results" / "metrics"
+
+    missing = []
+    for f in ["train_FD001.txt", "test_FD001.txt", "RUL_FD001.txt"]:
+        if not (raw_dir / f).exists():
+            missing.append(f"data/raw/{f}")
+    for f in ["xgboost_best.joblib", "conformal_calibrator.joblib"]:
+        if not (models_dir / f).exists():
+            missing.append(f"models/{f}")
+    if not (metrics_dir / "experiment_log.csv").exists():
+        missing.append("results/metrics/experiment_log.csv")
+    return missing
+
+missing_files = check_prerequisites()
+if missing_files:
+    st.error("### ⚠️ Required Pipeline Artifacts Missing")
+    st.markdown(
+        "AeroGuard detected that raw data or trained artifacts are not yet generated:\n\n"
+        + "\n".join([f"- `{m}`" for m in missing_files])
+        + "\n\n**To reproduce the end-to-end pipeline (data verification, training, calibration, and metrics), run:**\n"
+        "```powershell\npython -m src.pipeline\n```"
+    )
+    st.stop()
 
 
 # -----------------------------------------------------------------------------
@@ -196,16 +226,9 @@ elif view_option == "2. Individual Engine Health":
     st.markdown("---")
     st.markdown("### Interactive Sensor Telemetry")
     sensor_names_map = {
-        "s_2": "s_2 (T24: LPT Inlet Temp [R])",
-        "s_3": "s_3 (T30: HPC Outlet Temp [R])",
-        "s_4": "s_4 (T50: LPT Outlet Temp [R])",
-        "s_7": "s_7 (P30: HPC Outlet Total Pressure [psia])",
-        "s_8": "s_8 (Nf: Physical Fan Speed [rpm])",
-        "s_11": "s_11 (BPR: Bypass Ratio)",
-        "s_12": "s_12 (Ps30: HPC Outlet Static Pressure [psia])",
-        "s_15": "s_15 (LPT Coolant Bleed)",
-        "s_20": "s_20 (HPT Coolant Bleed Flow)",
-        "s_21": "s_21 (LPT Coolant Bleed Flow)",
+        col: f"{col} ({SENSOR_METADATA[col]['symbol']}: {SENSOR_METADATA[col]['description']} [{SENSOR_METADATA[col]['units']}])"
+        for col in INFORMATIVE_SENSORS
+        if col in SENSOR_METADATA
     }
     selected_sensors = st.multiselect(
         "Select Sensor Channels to Track:",
@@ -316,11 +339,12 @@ elif view_option == "5. SHAP Feature Attribution":
     with tab1:
         st.image(str(project_root / "results" / "figures" / "11_shap_global_summary.png"), caption="Global TreeSHAP Summary Plot (Test Fleet)")
         st.markdown(
-            """
-            **Physical Attribution Insights:**
-            - **`s_11_roll_mean_15` (Bypass Ratio):** Elevated bypass ratio strongly depresses predicted RUL, serving as the primary indicator of compressor bleed diversion.
-            - **`s_4_roll_mean_15` & `s_4_diff_15` (LPT Outlet Temp):** Rising low-pressure turbine temperatures directly accelerate RUL depletion.
-            - **`s_12_roll_mean_15` (HPC Static Pressure):** Declining compressor pressure ratio provides strong negative attribution driving predictions toward failure.
+            r"""
+            **Empirical Attribution Insights (Test Fleet TreeSHAP):**
+            - **`s_11` features ($Ps_{30}$: Static pressure at HPC outlet):** Strongly influences RUL predictions as HPC pressure shift reflects degradation along the compression path.
+            - **`s_4` features ($T_{50}$: Total temp at LPT outlet):** Higher exhaust gas temperatures statistically associate with reduced remaining life across tree splits.
+            - **`s_12` features ($\phi$: Ratio of fuel flow to $Ps_{30}$):** Relative shift in fuel flow per unit static pressure serves as an empirical degradation indicator in the tree ensemble.
+            *Note: SHAP values quantify feature contributions within the fitted model and reflect predictive association, not causal mechanics.*
             """
         )
 

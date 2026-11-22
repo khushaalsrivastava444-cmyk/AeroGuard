@@ -97,16 +97,17 @@ def build_pipeline(model_name: str, **kwargs: Any) -> Pipeline:
         raise ValueError(f"Unknown model name '{model_name}'. Choose from: median, linear, ridge, rf, xgb")
 
 
-def run_engine_group_cv(
+def run_all_cycle_cv(
     pipeline: Pipeline,
     X: pd.DataFrame,
     y: pd.Series,
     engine_ids: pd.Series,
     n_splits: int = 5,
 ) -> dict[str, float]:
-    """Execute GroupKFold cross-validation partitioned strictly by engine ID.
+    """Execute all-cycle GroupKFold cross-validation partitioned strictly by engine ID.
 
-    Adjacent time steps for the same engine are never split across train and validation.
+    Note: This is an internal diagnostic metric evaluated over every lifecycle observation.
+    It does not simulate the operational endpoint evaluation of the official test protocol.
     """
     gkf = GroupKFold(n_splits=n_splits)
     mae_list, rmse_list, r2_list, nasa_list = [], [], [], []
@@ -116,7 +117,7 @@ def run_engine_group_cv(
         X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
 
         pipeline.fit(X_train, y_train)
-        y_val_pred = pipeline.predict(X_val)
+        y_val_pred = np.maximum(0.0, pipeline.predict(X_val))
 
         metrics = compute_regression_metrics(y_val.to_numpy(), y_val_pred)
         mae_list.append(metrics["mae"])
@@ -125,12 +126,117 @@ def run_engine_group_cv(
         nasa_list.append(metrics["nasa_score"])
 
     return {
-        "cv_mae_mean": float(np.mean(mae_list)),
-        "cv_mae_std": float(np.std(mae_list)),
-        "cv_rmse_mean": float(np.mean(rmse_list)),
-        "cv_rmse_std": float(np.std(rmse_list)),
-        "cv_r2_mean": float(np.mean(r2_list)),
-        "cv_nasa_mean": float(np.mean(nasa_list)),
+        "all_cycle_mae": float(np.mean(mae_list)),
+        "all_cycle_rmse": float(np.mean(rmse_list)),
+        "all_cycle_r2": float(np.mean(r2_list)),
+        "all_cycle_nasa": float(np.mean(nasa_list)),
+    }
+
+
+# Backwards compatibility alias
+run_engine_group_cv = run_all_cycle_cv
+
+
+def run_endpoint_group_cv(
+    pipeline: Pipeline,
+    train_df: pd.DataFrame,
+    include_temporal: bool = True,
+    rul_cap: Optional[int] = 125,
+    n_splits: int = 5,
+    seed: int = 42,
+    min_observed_cycles: int = 30,
+) -> dict[str, float]:
+    """Simulate operational endpoint evaluation across held-out validation engines.
+
+    Validation Strategy:
+        1. Segregate engines into K folds using GroupKFold.
+        2. For each held-out engine i, simulate an operational truncation cycle:
+           t_cutoff ~ Uniform(min_observed_cycles, T_i - 1)
+        3. Generate causal features strictly using observations up to t_cutoff.
+        4. Construct the true ground-truth RUL target at that endpoint:
+           RUL_true(i) = T_i - t_cutoff
+        5. Predict RUL at the endpoint (exactly 1 prediction per engine) and evaluate.
+
+    Args:
+        pipeline: Estimator pipeline to fit and evaluate.
+        train_df: Raw training dataframe containing full engine trajectories.
+        include_temporal: Whether to compute causal rolling and delta features.
+        rul_cap: Target ceiling threshold for training labels.
+        n_splits: Number of engine groups for cross-validation.
+        seed: Random seed for reproducible truncation cutoff sampling.
+        min_observed_cycles: Minimum historical cycles prior to cutoff.
+
+    Returns:
+        dict: Mean and standard deviation of endpoint MAE, RMSE, R2, and NASA Score.
+    """
+    rng = np.random.RandomState(seed)
+    unique_engines = np.sort(train_df["engine_id"].unique())
+    gkf = GroupKFold(n_splits=n_splits)
+
+    # Pre-determine reproducible cutoff cycle per engine
+    engine_cutoffs: dict[int, int] = {}
+    engine_max_cycles: dict[int, int] = {}
+    for eng_id, group in train_df.groupby("engine_id"):
+        t_max = int(group["cycle"].max())
+        engine_max_cycles[eng_id] = t_max
+        lower = min(min_observed_cycles, t_max - 5)
+        cutoff = rng.randint(lower, t_max)
+        engine_cutoffs[eng_id] = cutoff
+
+    endpoint_mae, endpoint_rmse, endpoint_r2, endpoint_nasa = [], [], [], []
+
+    # Iterate over engine folds
+    for fold, (train_eng_idx, val_eng_idx) in enumerate(gkf.split(unique_engines, groups=unique_engines)):
+        train_engines = set(unique_engines[train_eng_idx])
+        val_engines = set(unique_engines[val_eng_idx])
+
+        # 1. Prepare training data strictly on training engines
+        df_train_fold = train_df[train_df["engine_id"].isin(train_engines)].copy()
+        X_train, y_train, feat_cols = prepare_feature_matrix(
+            df_train_fold, include_temporal=include_temporal, rul_cap=rul_cap, is_train=True
+        )
+
+        pipeline.fit(X_train, y_train)
+
+        # 2. Simulate truncated histories for validation engines
+        val_slices = []
+        val_targets = []
+        for eng_id in sorted(val_engines):
+            cutoff = engine_cutoffs[eng_id]
+            t_max = engine_max_cycles[eng_id]
+            eng_slice = train_df[(train_df["engine_id"] == eng_id) & (train_df["cycle"] <= cutoff)].copy()
+            val_slices.append(eng_slice)
+            val_targets.append(t_max - cutoff)
+
+        df_val_truncated = pd.concat(val_slices, ignore_index=True)
+
+        # 3. Generate causal features using only past history up to cutoff
+        if include_temporal:
+            df_val_feat = compute_temporal_features(df_val_truncated, sensors=INFORMATIVE_SENSORS, windows=(5, 15))
+        else:
+            df_val_feat = df_val_truncated.copy()
+
+        # Extract only the terminal observed cycle per validation engine
+        final_idx = df_val_feat.groupby("engine_id")["cycle"].idxmax()
+        val_endpoints = df_val_feat.loc[final_idx].sort_values("engine_id").reset_index(drop=True)
+
+        X_val_endpoint = val_endpoints[feat_cols]
+        y_val_true = np.asarray(val_targets, dtype=float)
+        y_val_pred = np.maximum(0.0, pipeline.predict(X_val_endpoint))
+
+        fold_metrics = compute_regression_metrics(y_val_true, y_val_pred)
+        endpoint_mae.append(fold_metrics["mae"])
+        endpoint_rmse.append(fold_metrics["rmse"])
+        endpoint_r2.append(fold_metrics["r2"])
+        endpoint_nasa.append(fold_metrics["nasa_score"])
+
+    return {
+        "val_endpoint_mae": float(np.mean(endpoint_mae)),
+        "val_endpoint_mae_std": float(np.std(endpoint_mae)),
+        "val_endpoint_rmse": float(np.mean(endpoint_rmse)),
+        "val_endpoint_rmse_std": float(np.std(endpoint_rmse)),
+        "val_endpoint_r2": float(np.mean(endpoint_r2)),
+        "val_endpoint_nasa": float(np.mean(endpoint_nasa)),
     }
 
 
