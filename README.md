@@ -8,6 +8,22 @@ AeroGuard is an end-to-end predictive maintenance intelligence system built on t
 
 ---
 
+## Technical Skills & Practical Competencies Demonstrated
+
+This project is built to demonstrate practical, interview-defensible Applied ML engineering skills across the full lifecycle:
+
+- **Time-Series Validation Hygiene:** GroupKFold engine-level cross-validation to prevent adjacent cycle leakage, simulating operational test-time endpoint truncation.
+- **Feature Engineering & Degradation Physics:** Causal rolling aggregations (means, standard deviations) and first-difference velocities strictly partitioned per engine to capture degradation rates without lookahead bias.
+- **Target Formulation:** Piecewise-linear target capping grounded in early-life wear physics, systematically eliminating noise fitting in nominal operating regimes.
+- **Custom Domain Metrics:** Vectorized implementation and unit testing of NASA's asymmetric exponential prognostics scoring metric, heavily penalizing late predictions that risk in-flight failure.
+- **Supervised Regression & Benchmarking:** Constant baselines, Ordinary Least Squares, Ridge regularization, Random Forest, and tuned XGBoost gradient boosting.
+- **Model Interpretability (XAI):** TreeSHAP global feature attribution (beeswarm summary) and local single-engine waterfall breakdowns of sensor wear drivers.
+- **Uncertainty Quantification:** Distribution-free Split Conformal Prediction providing finite-sample coverage guarantees without assuming Gaussian errors.
+- **Unsupervised Anomaly Detection:** Multi-dimensional Isolation Forest tracking health score deterioration along the operational lifecycle.
+- **Software Engineering & Testing:** Clean Python package layout, type hinting, 18 automated Pytest unit tests, interactive Streamlit operations dashboard, and Docker containerization.
+
+---
+
 ## 1. Why Predictive Maintenance Matters
 
 Aircraft engines operate under extreme thermal and mechanical stresses. Traditional scheduled maintenance operates on fixed cycle thresholds (e.g., overhaul every 300 cycles), which incurs heavy economic inefficiencies:
